@@ -1,0 +1,18 @@
+# build output
+build/
+
+# market data - never committed
+data/
+
+# python
+.venv/
+__pycache__/
+*.egg-info/
+
+# local planning and orchestration - not part of the public artifact
+PLAN.md
+DECISIONS.md
+STATE.md
+MOVED.md
+.claude/
+.memsearch/
