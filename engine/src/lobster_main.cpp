@@ -9,14 +9,32 @@
 #include "impact/lobster.hpp"
 
 // lobster_replay: streams a LOBSTER message/orderbook pair through the engine and scores the
-// reconstructed top-10 book against the orderbook file.
+// reconstructed top-10 book against the orderbook file, TWO ways.
 //
 // The two files are small plain-text CSVs (a few tens of MB for a full day at level 10), read
 // line by line with std::ifstream -- no compression, unlike the Tardis day, so no GzLineReader.
 //
+// FREE-RUNNING (one persistent book for the whole day)
+// ------------------------------------------------------
 // Row 1 of the orderbook file seeds the initial book (see LobsterAdapter::initialize); the
 // message file's row 1 is therefore never applied as an ordinary event. Every message from row 2
 // onward is applied and its resulting book compared against the orderbook row of the SAME index.
+// This measures cumulative drift, most of it a documented property of a depth-10 export: LOBSTER
+// only reports "the evolution of the limit order book up to the requested number of levels"
+// (LOBSTER_SampleFiles_ReadMe.txt), so an event that fires while a level sits outside the
+// published top 10 never appears in the message file at all. A free-running replay has no way to
+// see it either, and drifts from LOBSTER's true (full-depth) reconstruction as a result -- not
+// because the adapter mismapped anything.
+//
+// SINGLE-STEP (a fresh book reseeded from truth before every message)
+// -----------------------------------------------------------------------
+// For message i (i = 2..N), a THROWAWAY engine and adapter are seeded straight from orderbook
+// row i-1 -- the same LobsterAdapter::initialize path as the free-running day-open seed -- message
+// i alone is applied, and the result is compared against orderbook row i. Every step starts from
+// LOBSTER's own published truth, so this isolates exactly what this stage built (the type mapping
+// and the matching engine) from the depth-10 export's structural information loss: a mismatch here
+// means the adapter did something wrong with message i, not that some earlier out-of-window event
+// went unseen. Cheap: ~20 resting orders per step, 400,390 steps.
 
 namespace {
 
@@ -48,6 +66,14 @@ struct ReplayCounters {
     std::uint64_t invariant_violations = 0;
     std::uint64_t messages_with_fills = 0;
     std::uint64_t crossed_book_after_message = 0;
+    std::string first_violation;
+};
+
+/// Invariant bookkeeping for the single-step harness's throwaway engines, kept separate from the
+/// free-running counters above so each metric's "0 violations" claim is checked on its own terms.
+struct SingleStepCounters {
+    std::uint64_t checks = 0;
+    std::uint64_t violations = 0;
     std::string first_violation;
 };
 
@@ -90,6 +116,9 @@ int main(int argc, char** argv) {
     impact::LobsterAdapter adapter;
     impact::LobsterValidationStats validation;
     ReplayCounters counters;
+
+    impact::LobsterValidationStats single_step_validation;
+    SingleStepCounters single_step_counters;
 
     const auto started = std::chrono::steady_clock::now();
 
@@ -135,7 +164,12 @@ int main(int argc, char** argv) {
     adapter.initialize(engine, first_row, first_msg.ts_us);
     check_invariant(/*force=*/true);
 
-    // Row 2 onward: apply then compare, in lockstep.
+    // The single-step harness's seed for message i is orderbook row i-1; row 1 is the seed for
+    // message 2, the loop's first iteration.
+    impact::LobsterSnapshotRow prev_row = first_row;
+
+    // Row 2 onward: apply then compare, in lockstep, on both the free-running book and a fresh
+    // single-step reseed.
     while (std::getline(messages, msg_line)) {
         if (!std::getline(orderbook, ob_line)) {
             std::cerr << "lobster_replay: orderbook file ran out before the message file\n";
@@ -160,13 +194,34 @@ int main(int argc, char** argv) {
         check_invariant(/*force=*/false);
 
         impact::LobsterSnapshotRow snapshot;
-        if (impact::parse_lobster_snapshot_row(ob_line, snapshot) !=
-            impact::LobsterRowStatus::Ok) {
+        const bool snapshot_ok = impact::parse_lobster_snapshot_row(ob_line, snapshot) ==
+                                  impact::LobsterRowStatus::Ok;
+        if (!snapshot_ok) {
             ++counters.orderbook_parse_errors;
-            continue;
+        } else {
+            impact::record_lobster_comparison(validation, row.ts_us,
+                                              impact::compare_lobster_snapshot(engine, snapshot));
+
+            // Single-step: a throwaway engine seeded from truth at i-1, message i applied alone.
+            impact::Engine step_engine(64);
+            impact::LobsterAdapter step_adapter;
+            step_adapter.initialize(step_engine, prev_row, row.ts_us);
+            step_adapter.apply(step_engine, row);
+
+            ++single_step_counters.checks;
+            const std::string violation = impact::first_invariant_violation(step_engine);
+            if (!violation.empty()) {
+                ++single_step_counters.violations;
+                if (single_step_counters.first_violation.empty()) {
+                    single_step_counters.first_violation = violation;
+                }
+            }
+            impact::record_lobster_comparison(
+                single_step_validation, row.ts_us,
+                impact::compare_lobster_snapshot(step_engine, snapshot));
+
+            prev_row = snapshot;
         }
-        impact::record_lobster_comparison(validation, row.ts_us,
-                                          impact::compare_lobster_snapshot(engine, snapshot));
 
         if (counters.messages_seen % 100'000 == 0) {
             std::fprintf(stderr, "  %llu messages applied\n",
@@ -209,8 +264,17 @@ int main(int argc, char** argv) {
     report += "conservation residual   : " + std::to_string(engine.conservation_residual()) + '\n';
     report += "adapter live orders     : " + std::to_string(adapter.live_orders()) + '\n';
     report += "engine open orders      : " + std::to_string(engine.open_orders()) + '\n';
-    report += "\n== orderbook validation ==\n";
+    report += "\n== free-running orderbook validation ==\n";
     report += impact::format_lobster_validation_report(validation);
+
+    report += "\n== single-step orderbook validation ==\n";
+    report += "single-step checks      : " + std::to_string(single_step_counters.checks) + '\n';
+    report +=
+        "single-step violations  : " + std::to_string(single_step_counters.violations) + '\n';
+    if (!single_step_counters.first_violation.empty()) {
+        report += "single-step first viol. : " + single_step_counters.first_violation + '\n';
+    }
+    report += impact::format_lobster_validation_report(single_step_validation);
 
     std::cout << report;
     if (!opt.report_path.empty()) {
@@ -223,6 +287,7 @@ int main(int argc, char** argv) {
                  static_cast<long long>(ms % 1000));
 
     const bool clean = counters.invariant_violations == 0 && counters.message_parse_errors == 0 &&
-                       counters.orderbook_parse_errors == 0;
+                       counters.orderbook_parse_errors == 0 &&
+                       single_step_counters.violations == 0;
     return clean ? 0 : 1;
 }

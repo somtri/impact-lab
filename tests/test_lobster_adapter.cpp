@@ -382,3 +382,57 @@ TEST_CASE("a multi-order level's FIFO queue survives partial cancels and executi
     REQUIRE(e.conservation_residual() == 0);
     REQUIRE(first_invariant_violation(e).empty());
 }
+
+// Single-step harness pattern (lobster_main.cpp's second metric): seed a fresh book from
+// orderbook row i-1 via LobsterAdapter::initialize, apply exactly one message, compare against
+// row i. These tests exercise that exact three-call sequence the driver uses, at a depth-2 scale.
+
+TEST_CASE("single-step: a level shrunk (not emptied) by one message matches row i exactly",
+          "[lobster][single-step]") {
+    const LobsterSnapshotRow prev = two_level_row();  // row i-1
+    Engine e;
+    LobsterAdapter adapter;
+    adapter.initialize(e, prev, 100);
+
+    // An id this adapter never saw, absorbed into the resting synthetic order at (Bid, 1000).
+    adapter.apply(e, row_from(lobster_line("101", 2, 999, 3, 1000, 1)));
+
+    LobsterSnapshotRow truth = prev;  // row i: only bid rank 0's size changed
+    truth.bid_size[0] = 4;
+
+    const LobsterComparison cmp = compare_lobster_snapshot(e, truth);
+    REQUIRE(cmp.exact);
+    REQUIRE(cmp.touch_exact);
+    REQUIRE(first_invariant_violation(e).empty());
+}
+
+TEST_CASE("single-step: emptying a seeded level produces the documented EngineShallow residual",
+          "[lobster][single-step]") {
+    const LobsterSnapshotRow prev = two_level_row();  // row i-1
+    Engine e;
+    LobsterAdapter adapter;
+    adapter.initialize(e, prev, 100);
+
+    // An unknown type-3 delete for the entire size resting at (Bid, 1000): the synthetic order is
+    // fully absorbed and its level disappears from this adapter's ladder.
+    adapter.apply(e, row_from(lobster_line("101", 3, 999, 7, 1000, 1)));
+    REQUIRE(e.bids().level_count() == 1);  // only 999 is left
+
+    // Truth (row i, from LOBSTER's full-depth reconstruction): 999 is promoted to the touch, and
+    // a level below this adapter's original rank-10 window surfaces to fill the gap. This adapter
+    // has zero way to know that level's content -- exactly the residual the free-running section
+    // and lobster_main.cpp's single-step report attribute to the depth-10 export boundary.
+    LobsterSnapshotRow truth = prev;
+    truth.bid_price[0] = 999;
+    truth.bid_size[0] = 8;
+    truth.bid_price[1] = 500;  // a level this adapter never had any knowledge of
+    truth.bid_size[1] = 42;
+
+    const LobsterComparison cmp = compare_lobster_snapshot(e, truth, /*depth=*/2);
+    REQUIRE_FALSE(cmp.exact);
+    REQUIRE(cmp.touch_exact);  // the touch itself (rank 0) is still exact
+    REQUIRE(cmp.first_class == LobsterMismatchClass::EngineShallow);
+    REQUIRE(cmp.first_rank == 1);
+    REQUIRE(cmp.first_side == Side::Bid);
+    REQUIRE(first_invariant_violation(e).empty());
+}
