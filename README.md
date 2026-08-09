@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/somtri/impact-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/somtri/impact-lab/actions/workflows/ci.yml)
 
-Status: Stage 0 complete — data verified (Tardis, Binance futures, LOBSTER); Stage 1 — matching engine, up next
+Status: Stage 1 complete — matching engine, property-tested, deterministic replay; Stage 2 — real-data replay, validation, benchmarks, up next
 
 A limit order book engine in C++20 that replays real market data, measures aggregate price
 impact with the statistical rigor the problem demands, and — eventually — lets anyone inject a

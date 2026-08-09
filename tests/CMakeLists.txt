@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(tests
     test_sanity.cpp
+    test_header_standalone.cpp
     test_book.cpp
     test_matching.cpp
     test_snapshot.cpp
