@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>impact-lab demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 980px; padding: 16px; color: #111; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    h2 { font-size: 1.1rem; margin-top: 28px; }
+    p { line-height: 1.5; }
+    .copy { background: #f5f5f5; border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; }
+    .synthetic-label { display: inline-block; background: #ffe0b2; color: #7a3e00; font-weight: bold;
+      padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; margin-bottom: 8px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 10px 0; }
+    .controls label { font-size: 0.85rem; display: flex; flex-direction: column; gap: 2px; }
+    canvas { border: 1px solid #ccc; width: 100%; max-width: 900px; display: block; }
+    #windowReason { font-size: 0.8rem; color: #555; max-width: 900px; }
+    #status { font-size: 0.85rem; color: #555; white-space: pre-wrap; }
+    button { padding: 4px 12px; }
+  </style>
+</head>
+<body>
+  <h1>impact-lab: aggregate price impact, walked live</h1>
+  <div class="copy">
+    <p>
+      This demo replays 12 curated 30-60 minute windows of real Binance USD-M futures market
+      data (BTCUSDT and ETHUSDT), each drawn from the study window behind the project's memo.
+      Two things are on screen for every window. The <strong>real-data layer</strong> shows the
+      book's 12 percentage-band depth profile evolving snapshot by snapshot, next to the trade
+      tape, and lets you walk a hypothetical order against that real band data. The
+      <strong>engine layer</strong> is a <em>synthetic</em> playground: the project's own C++
+      order book, compiled to WebAssembly, seeded from the window's opening band totals only --
+      not from real order-level data.
+    </p>
+    <p>
+      <strong>Pricing conventions used throughout this demo:</strong> (1) the mid price used to
+      price the bands is the <em>last trade price</em> at or before the relevant moment -- the
+      project's trade-price proxy for the true midprice (D-008), valid at the coarse,
+      window/snapshot scale used here. (2) Liquidity within a band is treated as
+      <em>uniform</em> and priced at that band's own percentage-offset price (its
+      "band midpoint").
+    </p>
+    <p>
+      The square-root cost curve plotted against the real walk-the-book result is
+      <code>cost(Q) = Y &times; day_sigma &times; sqrt(Q / day_volume_base)</code>, with
+      <code>day_sigma</code> and <code>day_volume_base</code> read from the selected window's
+      own day and <code>Y = 1</code>, the practitioner "order of unity" convention from
+      Toth, Lemperi&egrave;re, Deremble, de Lataillade, Kockelkoren &amp; Bouchaud (2011),
+      "Anomalous price impact and the critical nature of liquidity in financial markets",
+      Physical Review X 1, 021006 (arXiv:1105.1694). <strong>This is a literature reference
+      curve, not the memo's own fitted model.</strong> The memo's own finding is a concave
+      impact exponent gamma &asymp; 0.76 -- that difference from the square-root exponent
+      (0.5) is exactly why the two curves on screen diverge. Nothing on this page makes a
+      fine-scale impact claim (see D-010): the curves shown are at window/snapshot scale only.
+    </p>
+    <p>This demo makes no performance claims, native or WebAssembly, about the engine.</p>
+  </div>
+
+  <h2>Window</h2>
+  <div class="controls">
+    <label>Window
+      <select id="windowSelect"></select>
+    </label>
+  </div>
+  <p id="windowReason"></p>
+
+  <h2>Real-data layer: band depth and trade tape</h2>
+  <canvas id="bookDepthCanvas" width="880" height="260"></canvas>
+  <div class="controls">
+    <button id="playBtn" type="button">Play</button>
+    <label>Snapshot
+      <input id="snapshotSlider" type="range" min="0" max="0" value="0" />
+    </label>
+  </div>
+
+  <h2>Walk-the-book execution cost vs square-root reference</h2>
+  <canvas id="costChartCanvas" width="880" height="220"></canvas>
+  <div class="controls">
+    <label>Side
+      <select id="sideSelect"><option value="buy">buy</option><option value="sell">sell</option></select>
+    </label>
+    <label>Order size Q (base units)
+      <input id="qtyInput" type="number" min="0" step="any" value="10" />
+    </label>
+    <label>Participation rate (0-1, cap per band)
+      <input id="participationInput" type="number" min="0.001" max="1" step="0.01" value="0.2" />
+    </label>
+    <label>Schedule slices
+      <input id="slicesInput" type="number" min="1" max="200" step="1" value="20" />
+    </label>
+    <button id="runScheduleBtn" type="button">Run schedule</button>
+  </div>
+
+  <h2>Engine layer: synthetic playground</h2>
+  <div class="synthetic-label">synthetic book derived from real band totals -- not real order-level data</div>
+  <canvas id="syntheticBookCanvas" width="880" height="240"></canvas>
+  <div class="controls">
+    <label>Side
+      <select id="engineSideSelect"><option value="0">buy</option><option value="1">sell</option></select>
+    </label>
+    <label>Order size (lots, base units)
+      <input id="engineQtyInput" type="number" min="0" step="any" value="5" />
+    </label>
+    <button id="engineSeedBtn" type="button">Seed from opening book</button>
+    <button id="engineInjectBtn" type="button">Inject marketable order</button>
+  </div>
+
+  <h2>Status</h2>
+  <div id="status">loading...</div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

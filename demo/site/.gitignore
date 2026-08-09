@@ -1,0 +1,10 @@
+node_modules/
+dist/
+
+# Dev-time copies of the WASM module and window binaries -- never committed. The WASM lane's
+# build/ and the packing lane's data/demo-windows/ are the sources of truth; see README.md
+# for the copy step.
+public/wasm/*
+!public/wasm/.gitkeep
+public/windows/*
+!public/windows/.gitkeep
