@@ -3,6 +3,8 @@ add_library(impact_engine STATIC
     src/engine.cpp
     src/replay.cpp
     src/synthetic.cpp
+    src/tardis.cpp
+    src/validation.cpp
 )
 target_include_directories(impact_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -18,3 +20,15 @@ add_executable(engine src/main.cpp)
 add_executable(engine_replay src/replay_main.cpp)
 target_link_libraries(engine_replay PRIVATE impact_engine)
 target_compile_definitions(engine_replay PRIVATE IMPACT_SYNTHETIC_TAPE="${IMPACT_SYNTHETIC_TAPE}")
+
+# tardis_replay reads the gz files in place, so it needs zlib. The adapter and the validation
+# comparator themselves take only text, so they live in impact_engine and are unit-tested with no
+# zlib and no data file. A machine without zlib still builds and passes the whole test suite; it
+# just cannot run a real day.
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+    add_executable(tardis_replay src/tardis_main.cpp)
+    target_link_libraries(tardis_replay PRIVATE impact_engine ZLIB::ZLIB)
+else()
+    message(STATUS "zlib not found: skipping tardis_replay (adapter tests still build)")
+endif()

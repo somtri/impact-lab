@@ -15,6 +15,8 @@ add_executable(tests
     test_snapshot.cpp
     test_property.cpp
     test_replay_golden.cpp
+    test_tardis_adapter.cpp
+    test_validation.cpp
 )
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain impact_engine)
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
