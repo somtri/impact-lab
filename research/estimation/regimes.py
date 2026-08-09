@@ -53,7 +53,7 @@ def volatility_rows(blocks: pl.DataFrame, n_hours: int) -> dict[str, np.ndarray]
 
 
 def hourly_trade_counts(minutes: pl.DataFrame) -> np.ndarray:
-    """Mean trades per UTC hour-of-day, length 24."""
+    """Total trades per UTC hour-of-day, summed across the input window; length 24."""
     per_hour = (
         minutes.group_by(pl.col("m").dt.hour().alias("h"))
         .agg(pl.col("n").sum().alias("trades"))
