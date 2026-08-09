@@ -48,6 +48,11 @@ jobs:
         working-directory: demo/site
         run: npm ci
 
+      - name: Stage data/demo-windows for tests
+        run: |
+          mkdir -p data/demo-windows
+          cp demo/site/public/windows/*.iwd1.gz demo/site/public/windows/index.json data/demo-windows/
+
       - name: Test
         working-directory: demo/site
         run: npx vitest run
