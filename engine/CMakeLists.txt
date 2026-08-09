@@ -1,6 +1,7 @@
 add_library(impact_engine STATIC
     src/book.cpp
     src/engine.cpp
+    src/lobster.cpp
     src/replay.cpp
     src/synthetic.cpp
     src/tardis.cpp
@@ -20,6 +21,11 @@ add_executable(engine src/main.cpp)
 add_executable(engine_replay src/replay_main.cpp)
 target_link_libraries(engine_replay PRIVATE impact_engine)
 target_compile_definitions(engine_replay PRIVATE IMPACT_SYNTHETIC_TAPE="${IMPACT_SYNTHETIC_TAPE}")
+
+# lobster_replay reads plain-text CSVs in place (LOBSTER ships uncompressed), so it needs no
+# zlib and always builds, unlike tardis_replay below.
+add_executable(lobster_replay src/lobster_main.cpp)
+target_link_libraries(lobster_replay PRIVATE impact_engine)
 
 # tardis_replay reads the gz files in place, so it needs zlib. The adapter and the validation
 # comparator themselves take only text, so they live in impact_engine and are unit-tested with no
