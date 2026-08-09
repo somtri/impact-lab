@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/somtri/impact-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/somtri/impact-lab/actions/workflows/ci.yml)
 
-Status: Stage 2 complete — a full Tardis day (60.9M messages) replays with zero invariant violations and a 100.0000% top-25 snapshot match over all 1,893,492 published rows ([docs/VALIDATION.md](docs/VALIDATION.md)); the matching core runs at 4.06M messages/sec, p50 101 ns / p99 4,279 ns, single-thread engine-only ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)); next: aggregate-impact research
+Status: Stage 3 complete — pre-registered aggregate-impact study on 1.97B Binance futures trades: concave impact with block-bootstrap CIs, placebo clean, two of six pre-registered hypotheses falsified and published as such ([research/RESULTS.md](research/RESULTS.md)); engine: full-day replay, 100.0000% snapshot match ([docs/VALIDATION.md](docs/VALIDATION.md)), 4.06M messages/sec engine-only, p50 101 ns / p99 4,279 ns ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)); next: equity replication and research memo
 
 A limit order book engine in C++20 that replays real market data, measures aggregate price
 impact with the statistical rigor the problem demands, and — eventually — lets anyone inject a
