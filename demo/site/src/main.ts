@@ -202,9 +202,15 @@ async function init(): Promise<void> {
     windowSelect.innerHTML = windows
       .map((w) => `<option>${w.symbol} ${w.day} (${w.vol_tercile})</option>`)
       .join("");
-    await loadSelectedWindow();
   } catch (err) {
     setStatus(`failed to load window index: ${String(err)}`);
+    return;
+  }
+
+  try {
+    await loadSelectedWindow();
+  } catch (err) {
+    setStatus(`failed to load initial window: ${String(err)}`);
     return;
   }
 

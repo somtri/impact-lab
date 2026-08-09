@@ -2,6 +2,9 @@
 // load-bearing spec; this file does not consult format.py). Gzip via the platform-native
 // DecompressionStream: browsers have it, and Node >=18 exposes the same global, so this same
 // code path runs unmodified in the built site and in the Node test runner.
+//
+// decodeWindowGz() sniffs its input rather than assuming it is always still gzip-compressed --
+// see that function's comment for why (a dev-server Content-Encoding surprise).
 
 export const N_BANDS = 12;
 export const BAND_PCT_TENTHS = [-50, -40, -30, -20, -10, -2, 2, 10, 20, 30, 40, 50] as const;
@@ -40,6 +43,8 @@ export interface DecodedWindow {
 
 const MAGIC = "IWD1";
 const HEADER_SIZE = 67;
+const GZIP_MAGIC_0 = 0x1f;
+const GZIP_MAGIC_1 = 0x8b;
 
 /** Decompresses one gzip byte stream with the native DecompressionStream (no bundled gzip
  * library). Available as a global in every evergreen browser and in Node >=18. */
@@ -147,7 +152,32 @@ export function decodeWindow(bytes: Uint8Array): DecodedWindow {
   };
 }
 
-/** Decompresses then decodes one .iwd1.gz file's bytes. */
-export async function decodeWindowGz(gz: Uint8Array): Promise<DecodedWindow> {
-  return decodeWindow(await gunzip(gz));
+/**
+ * Decodes one .iwd1.gz file's fetched bytes, sniffing whether they are still gzip-compressed
+ * or already plain IWD1.
+ *
+ * Some servers (Vite's dev server / sirv among them) serve a static .gz file with
+ * `Content-Encoding: gzip` set, which makes `fetch` transparently decompress it -- the bytes
+ * `arrayBuffer()` hands back are then already the plain IWD1 stream, not gzip. Sniffing the
+ * first two bytes (gzip's own magic, 0x1f 0x8b) makes this loader correct under both dev-server
+ * behavior and a plain static host (GitHub Pages) that serves the bytes as-is, without needing
+ * to know which one is in front of it.
+ */
+export async function decodeWindowGz(input: Uint8Array): Promise<DecodedWindow> {
+  if (input.length >= 2 && input[0] === GZIP_MAGIC_0 && input[1] === GZIP_MAGIC_1) {
+    return decodeWindow(await gunzip(input));
+  }
+  if (
+    input.length >= 4 &&
+    String.fromCharCode(input[0], input[1], input[2], input[3]) === MAGIC
+  ) {
+    return decodeWindow(input);
+  }
+  throw new Error(
+    `unrecognized window bytes: expected either gzip (magic 1f 8b -- server left it ` +
+      `compressed) or plain "${MAGIC}" (magic 49 57 44 31 -- server transparently ` +
+      `decompressed it), got first bytes ${Array.from(input.subarray(0, 4))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ")}`,
+  );
 }

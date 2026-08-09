@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { decodeWindow, gunzip, N_BANDS } from "../src/iwd1";
+import { decodeWindow, decodeWindowGz, gunzip, N_BANDS } from "../src/iwd1";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // data/demo-windows/ is repo-root/data/, gitignored and local-only (FORMAT.md, "Window binaries
@@ -139,4 +139,41 @@ describe("decodeWindow: real packaged windows", () => {
     // 12 windows x native DecompressionStream gunzip is slow under vitest's default 5s budget.
     30000,
   );
+});
+
+describe("decodeWindowGz: sniffs gzip vs already-decompressed input", () => {
+  // Reproduces the dev-server bug: Vite's dev server (sirv) serves .iwd1.gz with
+  // `Content-Encoding: gzip` set, so `fetch` transparently decompresses it and hands the
+  // loader already-plain IWD1 bytes, not gzip -- decodeWindowGz must handle both.
+  const file = "BTCUSDT-2026-04-25-0400-0430.iwd1.gz";
+
+  it("decodes correctly when given still-compressed gzip bytes (a plain static host)", async () => {
+    const gz = new Uint8Array(await readFile(path.join(DEMO_WINDOWS_DIR, file)));
+    expect(gz[0]).toBe(0x1f);
+    expect(gz[1]).toBe(0x8b);
+
+    const decoded = await decodeWindowGz(gz);
+    expect(decoded.symbol).toBe("BTCUSDT");
+    expect(decoded.day).toBe("2026-04-25");
+    expect(decoded.bookSnapshots.length).toBe(49);
+    expect(decoded.trades.length).toBe(16074);
+  });
+
+  it("decodes correctly when given already-decompressed bytes (the dev-server Content-Encoding case)", async () => {
+    const gz = new Uint8Array(await readFile(path.join(DEMO_WINDOWS_DIR, file)));
+    const raw = await gunzip(gz); // simulates fetch() transparently decompressing server-side
+    expect(String.fromCharCode(raw[0], raw[1], raw[2], raw[3])).toBe("IWD1");
+
+    const decoded = await decodeWindowGz(raw);
+    expect(decoded.symbol).toBe("BTCUSDT");
+    expect(decoded.day).toBe("2026-04-25");
+    expect(decoded.bookSnapshots.length).toBe(49);
+    expect(decoded.trades.length).toBe(16074);
+  });
+
+  it("throws a clear error naming both possibilities for unrecognized bytes", async () => {
+    const garbage = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
+    await expect(decodeWindowGz(garbage)).rejects.toThrow(/gzip/i);
+    await expect(decodeWindowGz(garbage)).rejects.toThrow(/IWD1/);
+  });
 });

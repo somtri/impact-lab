@@ -61,6 +61,11 @@ npm test          # vitest run -- decoder + walk-the-book tests, no dev server o
 Node's filesystem API, so it needs that directory to exist locally but does NOT need the
 `public/windows/` copy step -- the two are independent.
 
+Vite's dev server (`sirv`) serves `.iwd1.gz` files with `Content-Encoding: gzip` set, so
+`fetch` transparently decompresses them and the loader receives already-plain IWD1 bytes, not
+gzip. `decodeWindowGz` (`src/iwd1.ts`) sniffs the first two bytes to handle both that case and
+a plain static host (GitHub Pages) that serves the bytes as-is.
+
 ## What is real, what is synthetic
 
 Stated in the site's own header copy (`index.html`), restated here for the record: the
