@@ -88,6 +88,15 @@ public:
     /// the level total. `new_size` must be positive and smaller than the current size.
     void shrink_order(OrderPool& pool, NodeIndex node, Qty new_size);
 
+    /// Grows a resting order to `new_size` (the MODIFY RULE: a size increase loses queue
+    /// priority, so the general case unlinks the order and re-queues it at the back of its
+    /// level). When the order is the sole occupant of its level, that unlink+requeue is a
+    /// structural no-op -- a one-element queue re-appended to itself is the same queue, so the
+    /// level would only be erased and immediately re-created at the identical price. That case
+    /// is detected and skipped: the size is updated in place with no level-array touch at all.
+    /// Output is identical either way; this changes only how the identical result is reached.
+    void grow_order(OrderPool& pool, NodeIndex node, Qty new_size);
+
     /// Drops every level without touching the pool. The caller resets the pool.
     void clear() { levels_.clear(); }
 

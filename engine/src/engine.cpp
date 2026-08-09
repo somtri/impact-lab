@@ -6,6 +6,9 @@
 namespace impact {
 
 void Engine::apply(const Message& m) {
+    if (recorder_ != nullptr) {
+        recorder_->push_back(m);
+    }
     ++stats_.messages;
     switch (m.type) {
         case MsgType::Add:
@@ -106,13 +109,11 @@ void Engine::on_modify(const Message& m) {
         return;
     }
     if (m.size > current) {
-        // Size increase loses queue priority: unlink and re-queue at the back of the level.
+        // Size increase loses queue priority in general (see Ladder::grow_order); the level
+        // array is only touched when the order shares its level with another resting order.
         stats_.qty_removed += current;
         stats_.qty_added += m.size;
-        Ladder& side = ladder_mut(pool_[node].side);
-        side.unlink_order(pool_, node);
-        pool_[node].size = m.size;
-        side.push_back_order(pool_, node);
+        ladder_mut(pool_[node].side).grow_order(pool_, node, m.size);
     }
 }
 

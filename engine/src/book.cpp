@@ -83,6 +83,26 @@ void Ladder::shrink_order(OrderPool& pool, NodeIndex node, Qty new_size) {
     n.size = new_size;
 }
 
+void Ladder::grow_order(OrderPool& pool, NodeIndex node, Qty new_size) {
+    OrderNode& n = pool[node];
+    const std::size_t idx = find(n.price);
+    if (idx == npos) {
+        return;
+    }
+    Level& level = levels_[idx];
+    if (level.order_count == 1) {
+        // Sole occupant: unlink-then-requeue would leave head == tail == node exactly as
+        // before, so the level array is never touched. This is the case the Tardis L2 adapter
+        // hits on every grow, since it keeps one synthetic order per (side, price) level.
+        level.total_size += new_size - n.size;
+        n.size = new_size;
+        return;
+    }
+    unlink_order(pool, node);
+    n.size = new_size;
+    push_back_order(pool, node);
+}
+
 void Ladder::unlink_order(OrderPool& pool, NodeIndex node) {
     OrderNode& n = pool[node];
     // The node stores its price, not a level index, because inserting or erasing a level shifts

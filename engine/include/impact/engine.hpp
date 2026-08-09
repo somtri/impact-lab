@@ -92,6 +92,13 @@ public:
         }
     }
 
+    /// Benchmark hook only (see engine/src/bench_main.cpp): when set, every message passed to
+    /// `apply` is appended here before it is processed. Null by default and untouched by every
+    /// other caller, so it costs one pointer compare per message and changes no matching
+    /// behaviour. Lets the harness capture the exact normalized stream a real replay produced,
+    /// then replay it against a fresh Engine with no parse or decompress cost in the loop.
+    void set_message_recorder(std::vector<Message>* recorder) { recorder_ = recorder; }
+
     const Ladder& bids() const { return bids_; }
     const Ladder& asks() const { return asks_; }
     const Ladder& ladder(Side s) const { return s == Side::Bid ? bids_ : asks_; }
@@ -132,6 +139,7 @@ private:
     std::vector<Fill> fills_;
     std::vector<FeedTrade> feed_trades_;
     EngineStats stats_;
+    std::vector<Message>* recorder_ = nullptr;  ///< benchmark hook; see set_message_recorder
 };
 
 /// Checks every book, pool and conservation invariant. Returns an empty string when the engine
