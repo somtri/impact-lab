@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/somtri/impact-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/somtri/impact-lab/actions/workflows/ci.yml)
 
-Status: Stage 1 complete — matching engine, property-tested, deterministic replay; Stage 2 — real-data replay, validation, benchmarks, up next
+Status: Stage 2 in progress — a full Tardis day (73.3M messages) replays with zero invariant violations and reconstructs Tardis's own top-25 snapshots exactly ([docs/VALIDATION.md](docs/VALIDATION.md)); benchmarks up next
 
 A limit order book engine in C++20 that replays real market data, measures aggregate price
 impact with the statistical rigor the problem demands, and — eventually — lets anyone inject a
@@ -16,8 +16,8 @@ What this repo will contain as it grows:
 - `research/` — Python: aggregate price impact following Patzelt & Bouchaud, Phys. Rev. E 97,
   012304 (2018), with block-bootstrap confidence intervals, regime conditioning, funding-window
   controls, and a placebo test that must pass for any result to ship.
-- `docs/` — benchmark report (p50/p99 latency, messages/sec, native only), book-reconstruction
-  validation match rate, and data notes.
+- `docs/` — benchmark report (p50/p99 latency, messages/sec, native only), the
+  book-reconstruction validation match rate (`VALIDATION.md`), and data notes.
 - A hosted interactive demo — curated replay windows showing walk-the-book slippage diverging
   from the square-root-law prediction, which is the point: that gap is latent liquidity.
 
