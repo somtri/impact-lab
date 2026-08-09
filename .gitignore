@@ -1,8 +1,9 @@
 # build output
 build/
 
-# market data - never committed
-data/
+# market data - never committed. Anchored to the repo root so that tests/data, which holds the
+# committed synthetic tape and golden output, is still tracked.
+/data/
 
 # python
 .venv/

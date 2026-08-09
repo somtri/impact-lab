@@ -1,0 +1,4 @@
+# The synthetic tape and the golden replay output are compared byte for byte by ctest. Git must
+# not rewrite their line endings on checkout, or the check would pass on Linux and fail on
+# Windows.
+tests/data/*.txt -text
