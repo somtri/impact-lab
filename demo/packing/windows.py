@@ -20,7 +20,10 @@ clause: highest/lowest daily price range, (max-min)/mean over the day's trade pr
 
 UTC hour-of-day trade counts (`estimation.regimes.hourly_trade_counts`) pick the busy
 US-session hour (14:00 UTC, both symbols' single busiest hour) and the quiet Asia-session
-hour (04:00 UTC, the quietest hour inside the 00:00-08:00 UTC Asia session).
+hour (04:00 UTC, the quietest hour inside the 00:00-08:00 UTC Asia session). That function
+SUMS trade count per UTC hour-of-day slot across all 181 days (its docstring says "mean";
+the reason strings below correct that and report the 181-day TOTAL for the slot, e.g.
+64.8M trades at 14:00 UTC summed over 181 days, not a per-hour average).
 """
 from __future__ import annotations
 
@@ -42,16 +45,16 @@ WINDOWS: list[Window] = [
         "High realized-vol tercile day (rv=2.428e-03, tercile 2/2). Also the highest daily "
         "price range in the window (17.86%, max-min/mean) -- substitutes for a highest-"
         "funding day per the brief's fallback clause (no per-day funding-rate series is "
-        "exposed by the pipeline). 14:00 UTC is BTCUSDT's single busiest UTC hour by mean "
-        "trade count (64.8M), inside the US session.",
+        "exposed by the pipeline). 14:00 UTC is BTCUSDT's single busiest UTC hour by total "
+        "trade count summed across the 181-day window (64.8M), inside the US session.",
     ),
     Window(
         "BTCUSDT", "2026-04-25", "04:00", "04:30",
         "Low realized-vol tercile day (rv=1.432e-05, tercile 0/2, second-lowest of the 181 "
         "days). Lowest daily price range in the window excluding the 2026-07-25 anomaly day "
         "(0.96%) -- substitutes for a lowest-funding day (same fallback as above). 04:00 UTC "
-        "is BTCUSDT's quietest hour inside the 00:00-08:00 UTC Asia session (23.1M mean "
-        "trades vs. 64.8M at the daily peak).",
+        "is BTCUSDT's quietest hour inside the 00:00-08:00 UTC Asia session (23.1M total "
+        "trades summed across the 181-day window vs. 64.8M at the busiest hour).",
     ),
     Window(
         "BTCUSDT", "2026-07-25", "14:00", "14:30",
@@ -63,7 +66,8 @@ WINDOWS: list[Window] = [
     Window(
         "BTCUSDT", "2026-03-12", "15:00", "15:45",
         "Mid realized-vol tercile day (rv=2.158e-04, tercile 1/2). 15:00 UTC is BTCUSDT's "
-        "second-busiest UTC hour (58.7M mean trades), still inside the US session.",
+        "second-busiest UTC hour (58.7M total trades summed across the 181-day window), "
+        "still inside the US session.",
     ),
     Window(
         "BTCUSDT", "2026-05-09", "10:00", "10:30",
@@ -75,7 +79,8 @@ WINDOWS: list[Window] = [
         "BTCUSDT", "2026-06-24", "16:00", "16:45",
         "High realized-vol tercile day (rv=3.389e-03, tercile 2/2, the second-largest "
         "single-day spike in the six-month BTCUSDT window after 2026-03-01). 16:00 UTC "
-        "still sits in the elevated part of the US session (45.5M mean trades).",
+        "still sits in the elevated part of the US session (45.5M total trades summed "
+        "across the 181-day window).",
     ),
     Window(
         "BTCUSDT", "2026-02-25", "09:00", "09:30",
@@ -86,19 +91,20 @@ WINDOWS: list[Window] = [
     Window(
         "BTCUSDT", "2026-04-09", "20:00", "20:30",
         "Mid realized-vol tercile day (rv=1.827e-04, tercile 1/2). 20:00 UTC is a US-session "
-        "wind-down hour (25.7M mean trades), giving a mid-activity window distinct from the "
-        "peak-hour and quiet-hour picks above.",
+        "wind-down hour (25.7M total trades summed across the 181-day window), giving a "
+        "mid-activity window distinct from the peak-hour and quiet-hour picks above.",
     ),
     Window(
         "BTCUSDT", "2026-07-14", "13:00", "13:30",
         "Mid realized-vol tercile day (rv=3.028e-04, tercile 1/2) in July, the same month as "
-        "the anomaly-day window, at the US-session open hour (13:00 UTC, 52.5M mean trades).",
+        "the anomaly-day window, at the US-session open hour (13:00 UTC, 52.5M total "
+        "trades summed across the 181-day window).",
     ),
     Window(
         "ETHUSDT", "2026-02-07", "14:00", "14:45",
         "High realized-vol tercile day (rv=2.666e-02, tercile 2/2, the largest single-day "
         "ETHUSDT spike in the six-month window). 14:00 UTC is ETHUSDT's busiest UTC hour "
-        "(95.3M mean trades).",
+        "(95.3M total trades summed across the 181-day window).",
     ),
     Window(
         "ETHUSDT", "2026-04-16", "14:00", "14:30",
