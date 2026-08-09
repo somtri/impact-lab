@@ -179,26 +179,26 @@ and FIFO queue semantics against real market data. Instrument: AAPL. Day: 2012-0
 | Message / orderbook parse errors | 0 / 0 |
 | Initialization synthetic orders | 20 (10 ask levels + 10 bid levels) |
 | Messages applied (rows 2-400,391) | 400,390 |
-| Engine messages | 405,307 |
+| Engine messages | 405,405 |
 | Engine rejected | **0** |
-| Engine fills | 13,370 |
+| Engine fills | 13,325 |
 | Invariant violations | **0** (2,003 full checks: every 200 messages, forced at start and end) |
 | Volume conservation residual | **0** |
 | Adapter live orders vs. engine open orders | 2,303 = 2,303 (exact) |
+| Synthetic absorptions / deletes / shortfall shares | 36 / 13 / 350 |
 | Orderbook rows compared | 400,390 |
-| **Exact top-10 matches** | **156 (389 ppm = 0.0389%)** |
-| Exact touch matches | 124,133 (310,030 ppm = 31.0030%) |
+| **Exact top-10 matches** | **572 (1,428 ppm = 0.1428%)** |
+| Exact touch matches | 125,388 (313,164 ppm = 31.3164%) |
 
-There is no pre-registered target for this feed. The headline number is low, and the rest of this
-section is the accounting of why, traced to one root cause below, not a list of unexplained
-defects.
+There is no pre-registered target for this feed. The headline number is still low after this
+section's design change, and the evidence for why is the point of this section: not a list of
+unexplained defects, and not a claim of success either.
 
 The engine mechanics are exactly as clean as the Tardis day: zero invariant violations, zero
-conservation residual, zero engine-side message rejections across all 405,307 messages the
+conservation residual, zero engine-side message rejections across all 405,405 messages the
 adapter sent it, and the adapter's own live-order bookkeeping matches the engine's actual open
 order count exactly at the end of the run. The mismatch against LOBSTER's file is therefore not
-an adapter or engine defect corrupting state; it is a faithful, fully-traceable consequence of one
-modeling choice, described next.
+an adapter or engine defect corrupting state.
 
 ### Methodology
 
@@ -219,9 +219,9 @@ in `lobster.hpp`).
 | Type | Meaning | Engine effect |
 |---|---|---|
 | 1 | New limit order | `Add {order_id, side, price, size}` |
-| 2 | Partial cancel | `Modify {order_id, new_size}`, where `new_size` = last known size minus the message's `size` column (a DELTA, unlike Tardis's absolute L2 amount) |
-| 3 | Full deletion | `Delete {order_id}` |
-| 4 | Execution of a visible order | `Trade` (informational only) + `Modify`/`Delete` against the RESTING order's id -- see hazard below |
+| 2 | Partial cancel | `Modify {order_id, new_size}` against a tracked real order (a DELTA, unlike Tardis's absolute L2 amount), or absorbed into a resting synthetic order -- see DESIGN below |
+| 3 | Full deletion | `Delete {order_id}` against a tracked real order, or absorbed |
+| 4 | Execution of a visible order | `Trade` (informational only) + `Modify`/`Delete` against the RESTING order's id, tracked or absorbed -- see hazard below |
 | 5 | Execution of a hidden order | `Trade` only; order id is always 0 in this sample, never touches the book |
 | 7 | Trading halt | counted, no book effect (0 occurrences in this sample) |
 
@@ -229,88 +229,93 @@ in `lobster.hpp`).
 a naive translation to `Add` would synthesize a fictitious aggressor and mint a second fill on top
 of the one LOBSTER already printed. The adapter instead emits `Message::trade` (which never
 touches book state) for the informational record, and separately removes the executed size from
-the named RESTING order via `Modify` or `Delete`. Neither is an `Add`, so the engine's matching
-path is never entered for a type-4 row: engine fills stayed at 0 across all 19,767 applied type-4
-events; the 13,370 fills recorded came entirely from type-1 rows, discussed below.
+the named RESTING order (tracked or absorbed) via `Modify` or `Delete`. Neither is an `Add`, so
+the engine's matching path is never entered for a type-4 row: engine fills stayed at 0 across all
+19,774 type-4 events applied against a known order or absorbed; the 13,325 fills recorded came
+entirely from type-1 rows, discussed below.
 
-### Initialization and the root cause of the low match rate
+### Design: absorbing unknown events into the resident synthetic order
 
 Row 1's ten ask levels and ten bid levels are each seeded as ONE synthetic order carrying the
 level's total size -- the adapter has no way to know how many individual real orders, or which
-real ids, made up that resting size at market open. Every later type 2, 3 or 4 message that names
-one of those pre-existing real ids is therefore structurally unknown to the adapter. Per the
-brief's instruction (mirroring the Tardis adapter's `unknown_deletes`), it is dropped with a
-counter, never guessed:
+real ids, made up that resting size at market open. The first design, mirroring the Tardis
+adapter's `unknown_deletes`, dropped every type 2/3/4 event naming an id it never saw. That
+analogy was wrong: a Tardis unknown-delete names size that was never in the reconstruction at all
+(below the snapshot's published depth). A LOBSTER unknown event names size that IS in the
+reconstruction -- it sits inside the synthetic order seeded at that (side, price). Dropping it
+just strands that size forever; the synthetic order IS the unattributed open size at its level, so
+removing the event's size from it is accounting, not guessing. **The dropped-only design's result,
+for the record: 156 rows exact top-10 (0.0389%), 7,008 crossing type-1 adds, 14,871 dropped
+events.**
 
-| Counter | Count | Share of that type |
-|---|---|---|
-| Type 2 (partial cancel) applied / unknown | 3,227 / 33 | 1.0% unknown |
-| Type 3 (deletion) applied / unknown | 160,179 / 10,947 | 6.4% unknown |
-| Type 4 (execution) applied / unknown | 19,767 / 3,891 | 16.5% unknown |
-| **Total unknown-order events** | **14,871** | -- |
+The revised design tries the drop path's replacement first: an unknown type 2/3/4 event is
+absorbed into the synthetic order resting at its (side, price) when one still does -- `Modify`
+down, or `Delete` when it reaches zero. When the event's size exceeds what the synthetic order has
+left, the order still empties and the excess is recorded (`synthetic_absorb_shortfall`) rather
+than driving size negative. Only when no synthetic order rests at that level at all -- a level
+below the initial top-10 depth, or one already fully absorbed -- does the event fall through to
+the true unknown-order drop, exactly as before.
 
-A dropped event leaves that level's synthetic size exactly where initialization put it -- too
-high, at a stale price. Because "exact top-10 match" requires all 20 published numbers (10 ask +
-10 bid, price and size) to agree simultaneously, ONE still-stale rank anywhere in the ladder fails
-the entire row. AAPL's top-of-book turns over its constituent orders continuously, so the stale
-fraction accumulates over the session rather than staying confined to a few quiet deep levels.
-Replaying prefixes of the day shows the accumulation is gradual, not a discontinuity:
+| Design | Exact top-10 | Exact touch | Crossing type-1 adds | Dropped events |
+|---|---|---|---|---|
+| Drop-only (rejected) | 0.0389% (156 rows) | 31.0030% | 7,008 | 14,871 |
+| Absorption (current) | 0.1428% (572 rows) | 31.3164% | 6,969 | 14,800 |
 
-| Messages replayed | Unknown-order events | Exact top-10 | Exact touch |
-|---|---|---|---|
-| 500 | 8 | 5.81% | 89.18% |
-| 5,000 | 81 | 2.90% | 74.31% |
-| 50,000 | 646 | 0.31% | 42.53% |
-| 400,390 (full day) | 14,871 | 0.0389% | 31.00% |
+Absorption is mechanically clean: 36 events absorbed, 13 of those emptying their synthetic order
+entirely, 350 shares of shortfall recorded rather than guessed, and the engine mechanics stay
+perfect (0 rejections, 0 invariant violations, adapter and engine order counts equal). **But it
+barely moves the outcome the coordinator's hypothesis predicted.** Exact top-10 rises 3.7x, from
+one near-zero number to another; touch and crossing adds are essentially flat. The reason is in
+the absorption count itself: only 36 of the 14,836 events that named an id this adapter wasn't
+individually tracking found a synthetic order to absorb into -- **99.76% of them (14,800) target a
+level with no synthetic order at all.** The "unattributed size stranded inside the row-1 top-10"
+mechanism this design change targeted is real (36 confirmed instances) but small. It is not the
+dominant driver of the mismatch rate or of the crossing-add count.
 
-**Crossing type-1 adds (7,008 of 191,014 applied, 3.67%)** are a downstream symptom of the same
-cause, not an independent defect. LOBSTER's own model routes all marketable flow through type 4,
-so a type-1 that crosses the reconstructed book should be impossible; it happens here because a
-stale, unremoved level can sit at a price that a genuinely-tracked order on the other side now
-crosses. The adapter counts this rather than guarding it (no eviction, unlike the Tardis L2
-adapter): guarding would paper over exactly the signal the brief asked this report to surface. The
-correlation the brief predicted holds -- crossing adds and unknown-order events grow together
-across every prefix length in the table above -- and the resulting matches (13,370 fills, all from
-these 7,008 rows) further diverge the book from the ones LOBSTER never actually printed a fill
-for.
+That points to a second, unresolved mechanism, and there is direct evidence for one that has
+nothing to do with dropped or absorbed events at all: the first mismatch of the day, detailed at
+the end of the Mismatch classes section below, occurs at message 13 -- before any type 2/3/4 event
+in the file has named an untracked id, absorbed or dropped. Diagnosing that mechanism is not
+attempted here; per the coordinator's explicit instruction, this section stops at the evidence
+rather than iterating the design further.
 
 ### Mismatch classes
 
 | Class | Meaning | Count | Share |
 |---|---|---|---|
-| `PriceDiffers` | Both have a level at this rank, prices differ | 326,873 | 81.7% |
-| `SizeDiffers` | Both have a level at the same price, sizes differ | 73,062 | 18.3% |
+| `PriceDiffers` | Both have a level at this rank, prices differ | 325,124 | 81.3% |
+| `SizeDiffers` | Both have a level at the same price, sizes differ | 74,395 | 18.6% |
 | `EngineShallow` | Orderbook file has a level here, the engine's side ends sooner | 299 | 0.07% |
 | `EngineDeep` | The engine has a level here, the orderbook file's side ends sooner | 0 | 0% |
 
-`PriceDiffers` dominates: once one level's size is frozen stale while the true book's surrounding
-prices keep moving, the whole rank ordering on that side diverges, not just one level's count.
-`SizeDiffers` is the more localized case -- same price, same rank, wrong size. `EngineDeep` never
-occurs: the reconstruction never fabricates depth the true book lacks, only misprices or
-mis-sizes depth that is genuinely there or fails to remove depth that should be gone.
-`EngineShallow`'s 299 rows are the rare case where a crossing-add fill removed a whole level the
-true book still held.
+Essentially unchanged in shape from the drop-only design (81.7%/18.3%/0.07%/0%): absorption fixed
+36 real instances of stranded size without touching the mechanism that produces the bulk of these
+counts. `PriceDiffers` dominates: once a level's price or size is wrong anywhere in the top 10,
+the whole rank ordering on that side diverges, not just one level's count. `SizeDiffers` is the
+localized case -- same price, same rank, wrong size. `EngineDeep` never occurs: the reconstruction
+never fabricates depth the true book lacks. `EngineShallow`'s 299 rows are the rare case where a
+crossing-add fill removed a whole level the true book still held.
 
-The first-difference rank histogram: 276,257 of the 400,234 mismatched rows (69%) first diverge
-at rank 0, the touch, despite the touch turning over fastest. This is the earlier finding's
-consequence, not a contradiction of it: once a deep rank is wrong, ordinary order flow at nearby
-prices keeps interacting with a ladder whose topology is already wrong, and errors visibly work
-their way toward the touch as shallower levels get consumed over the following hours -- exactly
-what the accumulation table above shows in aggregate.
+The first-difference rank histogram: 275,002 of the 399,818 mismatched rows (69%) first diverge at
+rank 0, the touch, despite the touch turning over fastest -- unchanged from the drop-only design.
+Once a deep rank is wrong, ordinary order flow at nearby prices keeps interacting with a ladder
+whose topology is already wrong, and errors visibly work their way toward the touch over the
+following hours.
 
 The very first mismatch of the day appears at message 13 (`PriceDiffers`, rank 9, about 0.2
-seconds after 09:30 open) -- before the first unknown-order drop, which does not occur until
-later. Messages 1-13 only ever add or delete orders at prices the adapter added itself in this
-same window (traced by hand against both files), so the mismatch is not a dropped-order artifact.
-It is three real orders briefly improving the best ask (messages 4-6), then all being cancelled
-back out (messages 9, 11-13), which repeatedly pushes the original rank-8/9 levels out of the
-top-10 window and back in. When they come back, LOBSTER's own row 13 shows rank 8 (5876500) gone
-and rank 9 holding what was originally rank 9 (5879000/500) -- not the "shift the window back and
-reveal rank 8" result a same-information reconstruction would produce. LOBSTER's own full-history
-book evidently already differs from a plain continuation of row 1's level totals by this point,
-for a reason the visible message stream alone does not explain. This is a second, smaller
-contributor to the mismatch count, distinct from and additional to the dominant, fully-quantified
-unknown-order mechanism above; it is reported here as an open observation, not a diagnosed cause.
+seconds after 09:30 open) -- identical under both designs, because it involves no type 2/3/4 event
+naming an untracked id at all, absorbed or dropped. Messages 1-13 only ever add or delete orders at
+prices the adapter added itself in this same window (traced by hand against both files). It is
+three real orders briefly improving the best ask (messages 4-6), then all being cancelled back out
+(messages 9, 11-13), which repeatedly pushes the original rank-8/9 levels out of the top-10 window
+and back in. When they come back, LOBSTER's own row 13 shows rank 8 (5876500) gone and rank 9
+holding what was originally rank 9 (5879000/500) -- not the "shift the window back and reveal rank
+8" result a same-information reconstruction would produce. LOBSTER's own full-history book
+evidently already differs from a plain continuation of row 1's level totals by this point, for a
+reason the visible message stream alone does not explain, and for a reason absorption cannot reach
+-- there is no unattributed-size event here to absorb. Given how little absorption moved the
+headline numbers, this looks like the larger driver, not a minor addendum; it is reported here as
+an open, evidenced observation, not a diagnosed cause.
 
 ### Reproducing this
 
@@ -341,17 +346,22 @@ on this machine, so no rows/second figure is published here -- this is not a ben
 
 It proves the engine's own mechanics -- matching, FIFO queue order for multiple resting orders at
 one price level, `Add`/`Modify`/`Delete` bookkeeping, volume conservation, every checked invariant
--- hold exactly across a full real trading day and 405,307 order-granular messages built from real
+-- hold exactly across a full real trading day and 405,405 order-granular messages built from real
 order ids, including the first real-data exercise of `Ladder::grow_order`'s general path. Every
 message the adapter emitted was structurally valid to the engine (0 rejections), and the adapter's
-own record of which real orders rest matched the engine's actual open-order count exactly at the
-end of the run.
+own record of which real orders and which synthetic orders rest matched the engine's actual
+open-order count exactly at the end of the run.
 
-It does not prove the reconstructed book tracks LOBSTER's own reconstruction beyond brief
-stretches after any level last had its full order-level composition known. LOBSTER's free sample
-starts mid-session with an already-populated book whose constituent orders are permanently opaque
-to an adapter working from level aggregates alone; a full (non-sample) LOBSTER file starting at
-midnight, with every order visible by real id from the moment it is created, would not have this
-problem, but is out of scope for this stage (D-009's LOBSTER revisit note did not fire: no engine
-change was needed, only this adapter-level accounting). It covers one instrument, one day, and the
-top 10 levels only.
+It proves absorption is the right accounting for the case it targets: 36 events that would
+otherwise have stranded size inside a still-resident synthetic order are now applied correctly,
+with any shortfall recorded rather than guessed at, at no cost to any invariant.
+
+It does not prove that case is what makes the reconstructed book diverge from LOBSTER's own. Only
+0.24% of the events naming an untracked id were absorbable; the other 99.76% -- and the message-13
+anomaly, which involves no untracked-id event at all -- point at a mechanism this stage has not
+diagnosed. LOBSTER's free sample starts mid-session with an already-populated book, and this
+adapter's level-only initial snapshot cannot reconstruct whatever deeper history LOBSTER's own
+engine carries into that book; a full (non-sample) LOBSTER file starting at midnight, with every
+order visible by real id from the moment it is created, would not have this problem, but is out of
+scope for this stage (D-009's LOBSTER revisit note did not fire: no engine change was needed, only
+this adapter-level accounting). It covers one instrument, one day, and the top 10 levels only.
