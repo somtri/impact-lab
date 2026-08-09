@@ -29,6 +29,11 @@ find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     add_executable(tardis_replay src/tardis_main.cpp)
     target_link_libraries(tardis_replay PRIVATE impact_engine ZLIB::ZLIB)
+
+    # Stage 2 step 3-4 benchmark harness (docs/BENCHMARKS.md). Same zlib dependency as
+    # tardis_replay, for the same reason: it streams the real gz day.
+    add_executable(tardis_bench src/bench_main.cpp)
+    target_link_libraries(tardis_bench PRIVATE impact_engine ZLIB::ZLIB)
 else()
-    message(STATUS "zlib not found: skipping tardis_replay (adapter tests still build)")
+    message(STATUS "zlib not found: skipping tardis_replay and tardis_bench (adapter tests still build)")
 endif()

@@ -28,8 +28,8 @@ and all 25 bid levels, price and size, as integers. The target was 99.9%.
 
 Wall time for the run: 222 s, or 330,461 L2 rows/s. That figure covers gzip decompression, CSV
 parsing, the replay, 32,187 full invariant checks and the snapshot comparison, in one thread, and
-it moved by 20% between runs on the same machine. It is not a benchmark number. Stage 3 publishes
-those, with the parse and engine costs separated.
+it moved by 20% between runs on the same machine. It is not a benchmark number. `docs/BENCHMARKS.md`
+publishes those, with the parse and engine costs separated.
 
 ## What is compared
 
