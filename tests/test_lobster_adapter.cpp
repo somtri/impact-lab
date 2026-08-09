@@ -263,25 +263,89 @@ TEST_CASE("type 7 trading halt is counted and has no book effect",
     REQUIRE(first_invariant_violation(e).empty());
 }
 
-TEST_CASE("cancels, deletes and executions of an id the adapter never saw are dropped, not guessed",
+TEST_CASE("an unknown partial cancel absorbs into the still-resting synthetic order",
+          "[lobster][adapter][absorption]") {
+    Engine e;
+    LobsterAdapter adapter;
+    adapter.initialize(e, two_level_row(), 100);  // bid 1000 seeded at size 7, unattributed
+
+    // Order id 42 was never named by a type-1 row this adapter saw, but the synthetic order at
+    // (Bid, 1000) IS exactly the unattributed open size there, so this absorbs rather than drops.
+    adapter.apply(e, row_from(lobster_line("101", 2, 42, 3, 1000, 1)));
+
+    REQUIRE(adapter.stats().synthetic_absorptions == 1);
+    REQUIRE(adapter.stats().synthetic_deletes == 0);
+    REQUIRE(adapter.stats().synthetic_absorb_shortfall == 0);
+    REQUIRE(adapter.stats().unknown_order_events == 0);
+    REQUIRE(adapter.stats().partial_cancels == 0);  // this counter means "matched a real order"
+    REQUIRE(size_at(e, Side::Bid, 1000) == 4);
+    REQUIRE(first_invariant_violation(e).empty());
+}
+
+TEST_CASE("an unknown deletion that exhausts the synthetic order removes its whole level",
+          "[lobster][adapter][absorption]") {
+    Engine e;
+    LobsterAdapter adapter;
+    adapter.initialize(e, two_level_row(), 100);  // bid 1000 seeded at size 7
+
+    adapter.apply(e, row_from(lobster_line("101", 3, 42, 7, 1000, 1)));  // exactly exhausts it
+
+    REQUIRE(adapter.stats().synthetic_absorptions == 1);
+    REQUIRE(adapter.stats().synthetic_deletes == 1);
+    REQUIRE(adapter.stats().synthetic_absorb_shortfall == 0);
+    REQUIRE(prices_best_first(e, Side::Bid) == std::vector<Price>{999});  // 1000's level is gone
+    REQUIRE(first_invariant_violation(e).empty());
+}
+
+TEST_CASE("an absorbed event larger than the synthetic remainder empties it and records the shortfall",
+          "[lobster][adapter][absorption]") {
+    Engine e;
+    LobsterAdapter adapter;
+    adapter.initialize(e, two_level_row(), 100);  // bid 1000 seeded at size 7
+
+    // A type-4 execution for 10 shares against a level whose unattributed size is only 7: the
+    // synthetic order still goes to (and stays at) zero, and the excess is recorded, not guessed.
+    adapter.apply(e, row_from(lobster_line("101", 4, 42, 10, 1000, 1)));
+
+    REQUIRE(adapter.stats().synthetic_absorptions == 1);
+    REQUIRE(adapter.stats().synthetic_deletes == 1);
+    REQUIRE(adapter.stats().synthetic_absorb_shortfall == 3);
+    REQUIRE(prices_best_first(e, Side::Bid) == std::vector<Price>{999});
+    // The print happened regardless of whether the adapter can attribute it to a specific order.
+    REQUIRE(e.feed_trades().size() == 1);
+    REQUIRE(e.feed_trades()[0].size == 10);
+    REQUIRE(e.feed_trades()[0].aggressor_side == Side::Ask);  // opposite the resting bid
+    REQUIRE(first_invariant_violation(e).empty());
+}
+
+TEST_CASE("an unknown event at a level with no synthetic order is still dropped, not guessed",
           "[lobster][adapter][unknown]") {
     Engine e;
     LobsterAdapter adapter;
-    adapter.initialize(e, two_level_row(), 100);  // real ids of the resting size are unknown
+    adapter.initialize(e, two_level_row(), 100);  // only prices 1000/999 (bid), 1001/1002 (ask)
 
-    // These order ids were never named by a type-1 row the adapter saw (they are exactly the
-    // "resting since before the sample began" case the header documents).
-    adapter.apply(e, row_from(lobster_line("101", 2, 42, 1, 1000, 1)));
-    adapter.apply(e, row_from(lobster_line("102", 3, 43, 1, 1000, 1)));
-    adapter.apply(e, row_from(lobster_line("103", 4, 44, 1, 1000, 1)));
+    // Price 500 was never seeded at all -- exactly the below-initial-depth case the header
+    // documents, structurally identical to the Tardis adapter's unknown_deletes.
+    adapter.apply(e, row_from(lobster_line("101", 3, 42, 5, 500, 1)));
 
-    REQUIRE(adapter.stats().unknown_order_events == 3);
-    REQUIRE(adapter.stats().partial_cancels == 0);
-    REQUIRE(adapter.stats().deletions == 0);
-    REQUIRE(adapter.stats().visible_executions == 0);
+    REQUIRE(adapter.stats().unknown_order_events == 1);
+    REQUIRE(adapter.stats().synthetic_absorptions == 0);
     REQUIRE(e.stats().messages == 5);  // only the SnapshotReset + 4 init Adds ever reached it
-    REQUIRE(e.feed_trades().empty());  // the unknown type-4 emits nothing at all
-    REQUIRE(size_at(e, Side::Bid, 1000) == 7);  // untouched
+    REQUIRE(e.feed_trades().empty());
+    REQUIRE(first_invariant_violation(e).empty());
+}
+
+TEST_CASE("once a synthetic order is fully absorbed, a later event at its price is a true unknown drop",
+          "[lobster][adapter][absorption][unknown]") {
+    Engine e;
+    LobsterAdapter adapter;
+    adapter.initialize(e, two_level_row(), 100);  // bid 1000 seeded at size 7
+
+    adapter.apply(e, row_from(lobster_line("101", 3, 42, 7, 1000, 1)));  // absorbs, exhausts
+    adapter.apply(e, row_from(lobster_line("102", 2, 43, 1, 1000, 1)));  // nothing rests there now
+
+    REQUIRE(adapter.stats().synthetic_absorptions == 1);
+    REQUIRE(adapter.stats().unknown_order_events == 1);
     REQUIRE(first_invariant_violation(e).empty());
 }
 

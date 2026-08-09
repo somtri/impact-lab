@@ -70,9 +70,9 @@
 //   type 2 (partial cancel)        -> Modify {order_id, new_size}, where new_size = the order's
 //       last known remaining size minus the message's `size` column (a DELTA, not a new
 //       absolute size -- unlike Tardis's L2 amount field). Keeps queue position, per the
-//       engine's MODIFY RULE.
+//       engine's MODIFY RULE. When order_id is not a tracked real order, see ABSORPTION below.
 //
-//   type 3 (full deletion)         -> Delete {order_id}.
+//   type 3 (full deletion)         -> Delete {order_id}, or see ABSORPTION below.
 //
 //   type 4 (execution of a visible order) -- THE CENTRAL HAZARD. The message names the RESTING
 //       order; LOBSTER never puts the aggressor in the feed at all. Two things must both be
@@ -86,6 +86,7 @@
 //         2. Modify (if the resting order has size left) or Delete (if fully consumed) against
 //            the resting order's real id -- the step that actually removes size from the book.
 //       Neither step is an Add, so the engine's matching path is never entered for a type-4 row.
+//       When order_id is not a tracked real order, see ABSORPTION below.
 //
 //   type 5 (execution of a hidden order) -> counted (`stats().hidden_executions`) and otherwise
 //       IGNORED for book purposes: the order was never visible (order id 0 in this sample), so
@@ -96,18 +97,34 @@
 //   type 7 (trading halt)          -> counted (`stats().trading_halts`), no book effect. Not
 //       present in the AAPL 2012-06-21 sample (verified), handled defensively anyway.
 //
-// UNKNOWN ORDERS
-// ---------------
-// Types 2, 3 and 4 name a resting order by id. If that id is not in the adapter's live-order map
-// it is DROPPED with a counter (`stats().unknown_order_events`), exactly like the Tardis
-// adapter's `unknown_deletes`: never guess. Two situations produce this, both expected:
-//   - The order was resting before the sample file's first message (see INITIALIZATION).
-//   - The order was resting below the initial top-10 depth and only surfaces into the visible
-//     window later, once shallower levels empty out.
-// Because the initial book is seeded from an aggregated level snapshot (see below), the adapter
-// never learns the individual real ids of the orders that made up that aggregate, so their
-// later cancels/executions are structurally unknown-order events, not adapter bugs. This is the
-// documented, expected source of the LOBSTER validation report's mismatch classes.
+// UNKNOWN ORDERS: ABSORPTION, NOT DROPPING (revised design, see DECISIONS/PLAN history)
+// ---------------------------------------------------------------------------------------
+// Types 2, 3 and 4 name a resting order by id. When that id is not in the adapter's live-order
+// map, the first design (mirroring the Tardis adapter's `unknown_deletes`) simply dropped the
+// event. That analogy was wrong: a Tardis unknown-delete names size that was NEVER in the
+// reconstructed book (a level below the snapshot's published depth). A LOBSTER unknown type
+// 2/3/4 names size that IS in the book -- it sits inside the synthetic order this adapter seeded
+// at that (side, price) from orderbook row 1 (see INITIALIZATION). That synthetic order IS the
+// unattributed open size at its level, by construction, so removing the event's size from it is
+// correct accounting, not a guess about which real order it belonged to. Dropping the event
+// instead just strands size in the book forever, which is what caused the original design's
+// pervasive staleness and its correlated crossing-Add count.
+//
+// So every unknown type 2/3/4 event now takes one of two paths:
+//   1. ABSORBED (`stats().synthetic_absorptions`): a synthetic order still rests at (side,
+//      price). Its size is reduced by the event's `size` column -- Modify down if size remains,
+//      Delete if it reaches zero (`stats().synthetic_deletes`). If the event's size exceeds what
+//      the synthetic order has left, the order still goes to zero and the excess is recorded in
+//      `stats().synthetic_absorb_shortfall` rather than driving the size negative or guessed at.
+//      A type-4 absorption also emits the same informational Message::trade a known-order type-4
+//      does (see above) -- Trade never touches book state, so recording a print the adapter
+//      cannot attribute to a specific historical order is still safe.
+//   2. TRUE UNKNOWN (`stats().unknown_order_events`), dropped with a counter exactly as before:
+//      no synthetic order rests at that level, either because it never held one (a level below
+//      the initial top-10 depth, invisible until real order flow pushes it into view) or because
+//      one absorbed there earlier already went to zero. This remaining case really is the
+//      Tardis-shaped situation -- naming size the reconstruction structurally never had -- and it
+//      is the honest residual the validation report attributes mismatches to.
 //
 // INITIALIZATION
 // ---------------
@@ -117,7 +134,10 @@
 // `kLobsterSyntheticIdBase + 2*rank + (side == Ask)`. Because that row already reflects message
 // 1's effect, the driver applies `initialize` once and then feeds messages 2..N (never message
 // 1, which would double-count its size); it compares each applied message's resulting book
-// against the orderbook row of THE SAME message. See `lobster_main.cpp`.
+// against the orderbook row of THE SAME message. See `lobster_main.cpp`. Each synthetic order's
+// (side, price) is also indexed for lookup by ABSORPTION above, and kept in step whenever a
+// crossing type-1 Add's match() consumes it (see the NewLimitOrder case in lobster.cpp) so the
+// index never drifts from what the engine actually holds.
 
 namespace impact {
 
@@ -241,7 +261,14 @@ struct LobsterAdapterStats {
     std::uint64_t hidden_executions = 0;        ///< type 5, never touch the book
     std::uint64_t trading_halts = 0;            ///< type 7, never touch the book
 
-    std::uint64_t unknown_order_events = 0;     ///< type 2/3/4 naming an id the adapter never saw
+    std::uint64_t synthetic_absorptions = 0;    ///< unknown type 2/3/4 absorbed into a resting
+                                                 ///< synthetic init order (see ABSORPTION)
+    std::uint64_t synthetic_deletes = 0;        ///< absorptions above that emptied the synthetic
+                                                 ///< order (subset of synthetic_absorptions)
+    std::uint64_t synthetic_absorb_shortfall = 0; ///< total shares an absorbed event's size
+                                                   ///< exceeded the synthetic order's remainder by
+    std::uint64_t unknown_order_events = 0;     ///< type 2/3/4 naming an id with no tracked real
+                                                 ///< order and no synthetic order at that level
     std::uint64_t crossing_adds = 0;            ///< type 1 that crossed the reconstructed book
 
     std::uint64_t parse_errors = 0;             ///< rows that failed parse_lobster_row
@@ -269,7 +296,30 @@ public:
     const LobsterAdapterStats& stats() const { return stats_; }
 
 private:
+    /// A still-resting synthetic order minted at initialization: its (side, price) so the level
+    /// index can be kept in step, and its current tracked size.
+    struct SyntheticOrder {
+        Side side = Side::Bid;
+        Price price = 0;
+        Qty size = 0;
+    };
+
+    /// (side, price) encoded as one key for `synthetic_by_level_`. Prices in this feed are
+    /// always positive, so `2*price + (side == Ask)` cannot collide between the two sides.
+    static constexpr std::uint64_t level_key(Side side, Price price) {
+        return static_cast<std::uint64_t>(price) * 2 + (side == Side::Ask ? 1u : 0u);
+    }
+
+    /// Removes `amount` shares from the synthetic order resting at (side, price), if any: Modify
+    /// down, or Delete (and drop from both maps below) if it reaches zero. `amount` in excess of
+    /// the order's remaining size is recorded as a shortfall rather than applied. Returns false,
+    /// touching nothing, when no synthetic order rests at that level -- the caller's true-unknown
+    /// path. See ABSORPTION in the header comment.
+    bool absorb_into_synthetic(Engine& engine, Timestamp ts_us, Side side, Price price, Qty amount);
+
     std::unordered_map<OrderId, Qty> live_;  ///< real order id -> current resting size
+    std::unordered_map<OrderId, SyntheticOrder> synthetic_orders_;   ///< synthetic id -> state
+    std::unordered_map<std::uint64_t, OrderId> synthetic_by_level_; ///< level_key -> synthetic id
     LobsterAdapterStats stats_;
 };
 

@@ -190,6 +190,9 @@ int main(int argc, char** argv) {
     report += "visible exec. deletes   : " + std::to_string(a.visible_execution_deletes) + '\n';
     report += "hidden executions       : " + std::to_string(a.hidden_executions) + '\n';
     report += "trading halts           : " + std::to_string(a.trading_halts) + '\n';
+    report += "synthetic absorptions   : " + std::to_string(a.synthetic_absorptions) + '\n';
+    report += "synthetic deletes       : " + std::to_string(a.synthetic_deletes) + '\n';
+    report += "synthetic absorb shortfl: " + std::to_string(a.synthetic_absorb_shortfall) + '\n';
     report += "unknown-order events    : " + std::to_string(a.unknown_order_events) + '\n';
     report += "crossing type-1 adds    : " + std::to_string(a.crossing_adds) + '\n';
     report += "engine messages         : " + std::to_string(e.messages) + '\n';

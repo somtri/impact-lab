@@ -1,5 +1,6 @@
 #include "impact/lobster.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -275,22 +276,57 @@ void LobsterAdapter::initialize(Engine& engine, const LobsterSnapshotRow& first_
                                 Timestamp ts_us) {
     engine.apply(Message::snapshot_reset(ts_us));
     live_.clear();
+    synthetic_orders_.clear();
+    synthetic_by_level_.clear();
 
     // Bids then asks: harmless ordering choice here (a real published book is never internally
     // crossed, unlike Tardis's independently-updated sides), kept for consistency with the
     // Tardis adapter's snapshot-rebuild convention.
     for (int rank = 0; rank < first_row.bid_depth; ++rank) {
         const OrderId id = init_order_id(Side::Bid, rank);
-        engine.apply(
-            Message::add(ts_us, id, Side::Bid, first_row.bid_price[rank], first_row.bid_size[rank]));
+        const Price price = first_row.bid_price[rank];
+        const Qty size = first_row.bid_size[rank];
+        engine.apply(Message::add(ts_us, id, Side::Bid, price, size));
+        synthetic_orders_.emplace(id, SyntheticOrder{Side::Bid, price, size});
+        synthetic_by_level_.emplace(level_key(Side::Bid, price), id);
         ++stats_.init_levels;
     }
     for (int rank = 0; rank < first_row.ask_depth; ++rank) {
         const OrderId id = init_order_id(Side::Ask, rank);
-        engine.apply(
-            Message::add(ts_us, id, Side::Ask, first_row.ask_price[rank], first_row.ask_size[rank]));
+        const Price price = first_row.ask_price[rank];
+        const Qty size = first_row.ask_size[rank];
+        engine.apply(Message::add(ts_us, id, Side::Ask, price, size));
+        synthetic_orders_.emplace(id, SyntheticOrder{Side::Ask, price, size});
+        synthetic_by_level_.emplace(level_key(Side::Ask, price), id);
         ++stats_.init_levels;
     }
+}
+
+bool LobsterAdapter::absorb_into_synthetic(Engine& engine, Timestamp ts_us, Side side,
+                                           Price price, Qty amount) {
+    const auto level_it = synthetic_by_level_.find(level_key(side, price));
+    if (level_it == synthetic_by_level_.end()) {
+        return false;
+    }
+    const OrderId id = level_it->second;
+    SyntheticOrder& syn = synthetic_orders_.at(id);
+    const Qty current = syn.size;
+
+    ++stats_.synthetic_absorptions;
+    if (amount > current) {
+        stats_.synthetic_absorb_shortfall += static_cast<std::uint64_t>(amount - current);
+    }
+    const Qty new_size = current - std::min(amount, current);
+    if (new_size > 0) {
+        engine.apply(Message::modify(ts_us, id, new_size));
+        syn.size = new_size;
+    } else {
+        engine.apply(Message::del(ts_us, id));
+        synthetic_by_level_.erase(level_it);
+        synthetic_orders_.erase(id);
+        ++stats_.synthetic_deletes;
+    }
+    return true;
 }
 
 void LobsterAdapter::apply(Engine& engine, const LobsterRow& row) {
@@ -304,9 +340,9 @@ void LobsterAdapter::apply(Engine& engine, const LobsterRow& row) {
             // A crossing Add (see the header: should be impossible, but the reconstruction is
             // imperfect) can be matched away in full or in part by the engine, on BOTH sides:
             // the aggressor (this order) may rest for less than it submitted, and any RESTING
-            // order the match consumed -- including one this adapter individually tracks -- has
-            // left the book too. Both are read back from the fills the Add just produced rather
-            // than assumed, so live_ never drifts from what the engine actually holds.
+            // order the match consumed -- a real tracked order OR a synthetic init order -- has
+            // left the book too. All three are read back from the fills the Add just produced
+            // rather than assumed, so no bookkeeping map ever drifts from what the engine holds.
             const std::size_t fills_before = engine.fills().size();
             engine.apply(Message::add(row.ts_us, row.order_id, row.side, row.price, row.size));
             Qty matched = 0;
@@ -320,6 +356,16 @@ void LobsterAdapter::apply(Engine& engine, const LobsterRow& row) {
                     } else {
                         resting_it->second -= fill.size;
                     }
+                    continue;
+                }
+                const auto syn_it = synthetic_orders_.find(fill.resting_order_id);
+                if (syn_it != synthetic_orders_.end()) {
+                    if (fill.size >= syn_it->second.size) {
+                        synthetic_by_level_.erase(level_key(syn_it->second.side, syn_it->second.price));
+                        synthetic_orders_.erase(syn_it);
+                    } else {
+                        syn_it->second.size -= fill.size;
+                    }
                 }
             }
             const Qty remaining = row.size - matched;
@@ -331,54 +377,65 @@ void LobsterAdapter::apply(Engine& engine, const LobsterRow& row) {
         }
         case LobsterEventType::PartialCancel: {
             const auto it = live_.find(row.order_id);
-            if (it == live_.end()) {
-                ++stats_.unknown_order_events;
+            if (it != live_.end()) {
+                const Qty new_size = it->second - row.size;
+                if (new_size > 0) {
+                    engine.apply(Message::modify(row.ts_us, row.order_id, new_size));
+                    it->second = new_size;
+                } else {
+                    engine.apply(Message::del(row.ts_us, row.order_id));
+                    live_.erase(it);
+                }
+                ++stats_.partial_cancels;
                 break;
             }
-            const Qty new_size = it->second - row.size;
-            if (new_size > 0) {
-                engine.apply(Message::modify(row.ts_us, row.order_id, new_size));
-                it->second = new_size;
-            } else {
-                engine.apply(Message::del(row.ts_us, row.order_id));
-                live_.erase(it);
+            // Not a real order this adapter is tracking: absorb into the synthetic order resting
+            // at this level, if one still does (see ABSORPTION in the header). Only when neither
+            // exists is this a true unknown-order drop.
+            if (!absorb_into_synthetic(engine, row.ts_us, row.side, row.price, row.size)) {
+                ++stats_.unknown_order_events;
             }
-            ++stats_.partial_cancels;
             break;
         }
         case LobsterEventType::Deletion: {
             const auto it = live_.find(row.order_id);
-            if (it == live_.end()) {
-                ++stats_.unknown_order_events;
+            if (it != live_.end()) {
+                engine.apply(Message::del(row.ts_us, row.order_id));
+                live_.erase(it);
+                ++stats_.deletions;
                 break;
             }
-            engine.apply(Message::del(row.ts_us, row.order_id));
-            live_.erase(it);
-            ++stats_.deletions;
+            if (!absorb_into_synthetic(engine, row.ts_us, row.side, row.price, row.size)) {
+                ++stats_.unknown_order_events;
+            }
             break;
         }
         case LobsterEventType::VisibleExecution: {
             const auto it = live_.find(row.order_id);
-            if (it == live_.end()) {
-                // Unknown resting order: drop with a counter, never guess which level's size to
-                // reduce. No message reaches the engine at all, matching the Tardis adapter's
-                // unknown_deletes precedent.
-                ++stats_.unknown_order_events;
+            if (it != live_.end()) {
+                // The aggressor is never in the feed; this is informational only (Trade never
+                // touches book state) and cannot re-match.
+                engine.apply(Message::trade(row.ts_us, opposite(row.side), row.price, row.size));
+                const Qty new_size = it->second - row.size;
+                if (new_size > 0) {
+                    engine.apply(Message::modify(row.ts_us, row.order_id, new_size));
+                    it->second = new_size;
+                    ++stats_.visible_executions;
+                } else {
+                    engine.apply(Message::del(row.ts_us, row.order_id));
+                    live_.erase(it);
+                    ++stats_.visible_execution_deletes;
+                }
                 break;
             }
-            // The aggressor is never in the feed; this is informational only (Trade never
-            // touches book state) and cannot re-match.
-            engine.apply(Message::trade(row.ts_us, opposite(row.side), row.price, row.size));
-            const Qty new_size = it->second - row.size;
-            if (new_size > 0) {
-                engine.apply(Message::modify(row.ts_us, row.order_id, new_size));
-                it->second = new_size;
-                ++stats_.visible_executions;
-            } else {
-                engine.apply(Message::del(row.ts_us, row.order_id));
-                live_.erase(it);
-                ++stats_.visible_execution_deletes;
+            if (absorb_into_synthetic(engine, row.ts_us, row.side, row.price, row.size)) {
+                // The print happened whether or not this adapter can name the specific historical
+                // order it executed against; Trade is safe to record either way.
+                engine.apply(Message::trade(row.ts_us, opposite(row.side), row.price, row.size));
+                break;
             }
+            // Truly unknown: drop with a counter, never guess. No message reaches the engine.
+            ++stats_.unknown_order_events;
             break;
         }
         case LobsterEventType::HiddenExecution: {
