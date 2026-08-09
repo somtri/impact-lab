@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/somtri/impact-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/somtri/impact-lab/actions/workflows/ci.yml)
 
-Status: Stage 3 complete — pre-registered aggregate-impact study on 1.97B Binance futures trades: concave impact with block-bootstrap CIs, placebo clean, two of six pre-registered hypotheses falsified and published as such ([research/RESULTS.md](research/RESULTS.md)); engine: full-day replay, 100.0000% snapshot match ([docs/VALIDATION.md](docs/VALIDATION.md)), 4.06M messages/sec engine-only, p50 101 ns / p99 4,279 ns ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)); next: equity replication and research memo
+Status: Stage 4 complete — **start with the research memo ([docs/MEMO.md](docs/MEMO.md))**: pre-registered aggregate-impact study on 1.97B Binance futures trades, concave impact (gamma 0.760, CI [0.740, 0.782]) with block-bootstrap CIs, placebo clean, two of six pre-registered hypotheses falsified and published as such ([research/RESULTS.md](research/RESULTS.md)), and a measured proxy boundary that restricts the fine-scale claims rather than defending them; equity replication on a LOBSTER NASDAQ day, single-step touch match 100.0000% ([research/EQUITY.md](research/EQUITY.md)); engine: full-day replay, 100.0000% snapshot match ([docs/VALIDATION.md](docs/VALIDATION.md)), 4.06M messages/sec engine-only, p50 101 ns / p99 4,279 ns ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)); next: browser demo
 
 A limit order book engine in C++20 that replays real market data, measures aggregate price
 impact with the statistical rigor the problem demands, and — eventually — lets anyone inject a
