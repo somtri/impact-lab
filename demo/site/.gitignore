@@ -1,10 +1,8 @@
 node_modules/
 dist/
 
-# Dev-time copies of the WASM module and window binaries -- never committed. The WASM lane's
-# build/ and the packing lane's data/demo-windows/ are the sources of truth; see README.md
-# for the copy step.
+# Dev-time copy of the WASM module -- never committed. The WASM lane's build/ is the source of
+# truth; see README.md for the copy step. Window binaries under public/windows/ are committed
+# (Stage 5 ship gate) -- built fresh in CI for the WASM module instead.
 public/wasm/*
 !public/wasm/.gitkeep
-public/windows/*
-!public/windows/.gitkeep

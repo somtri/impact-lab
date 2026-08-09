@@ -8,6 +8,8 @@ A limit order book engine in C++20 that replays real market data, measures aggre
 impact with the statistical rigor the problem demands, and — eventually — lets anyone inject a
 hypothetical order into the tape in their browser to see what execution really costs.
 
+**[Live demo](https://somtri.github.io/impact-lab/)** — curated replay windows in the browser.
+
 What this repo will contain as it grows:
 
 - `engine/` — C++20 limit order book: price-time priority matching, flat price-level arrays,
@@ -28,6 +30,8 @@ Build (WSL2 or Linux, clang):
     ctest --test-dir build/native
 
 Data sources: Tardis.dev (replay and validation, local only), Binance public data (research),
-LOBSTER free sample (equity chapter). Raw market data is never committed to this repo.
+LOBSTER free sample (equity chapter). Raw market data is never committed to this repo. The demo's
+window binaries are re-encoded, aggregated band snapshots and short trade excerpts derived from
+Binance public market data (data.binance.vision); they will be removed on request.
 
 License: MIT

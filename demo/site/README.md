@@ -5,9 +5,10 @@ real-data layer (band-depth animation, trade tape, walk-the-book cost vs a squar
 literature reference curve) and the engine layer (a WASM synthetic playground, clearly
 labeled synthetic in the UI).
 
-`node_modules/`, `dist/`, and the dev-time copies under `public/wasm/` and `public/windows/`
-are all gitignored -- nothing under this directory's `public/wasm/*` or `public/windows/*` is
-ever committed (see `.gitignore`).
+`node_modules/` and `dist/` are gitignored. Window binaries under `public/windows/` are
+committed (Stage 5 ship gate) -- they are the 12 curated windows packed by `demo/packing/`.
+`public/wasm/` is still a dev-time copy target and stays gitignored; CI builds the WASM module
+fresh for the GitHub Pages deploy (see `.github/workflows/pages.yml`).
 
 ## Prerequisites
 
@@ -25,28 +26,27 @@ npm install
 The Vite dev server binds to WSL's localhost, which is reachable from Windows at the same
 `http://localhost:<port>` URL.
 
-## Dev-time data: copy steps (never committed)
+## Dev-time data: WASM copy step (never committed)
 
-The site reads two things at runtime that are not part of this package:
+Window binaries under `public/windows/` are committed directly -- no copy step needed for a
+clean checkout. If re-packing (`demo/packing/` writes new windows to `data/demo-windows/`),
+refresh the committed copies:
 
-1. **Window binaries.** `data/demo-windows/*.iwd1.gz` + `data/demo-windows/index.json`
-   (written by `demo/packing/`) copy into `public/windows/`:
+```bash
+cp ../../data/demo-windows/*.iwd1.gz ../../data/demo-windows/index.json public/windows/
+```
 
-   ```bash
-   cp ../../data/demo-windows/*.iwd1.gz ../../data/demo-windows/index.json public/windows/
-   ```
+The WASM module still needs a local copy for `npm run dev`. `demo/wasm/build/impact_wasm.js` +
+`impact_wasm.wasm` (built per `demo/wasm/README.md`; rebuild first if `demo/wasm/build/` is
+absent) copy into `public/wasm/`:
 
-2. **The WASM module.** `demo/wasm/build/impact_wasm.js` + `impact_wasm.wasm` (built per
-   `demo/wasm/README.md`; rebuild first if `demo/wasm/build/` is absent) copy into
-   `public/wasm/`:
+```bash
+cp ../wasm/build/impact_wasm.js ../wasm/build/impact_wasm.wasm public/wasm/
+```
 
-   ```bash
-   cp ../wasm/build/impact_wasm.js ../wasm/build/impact_wasm.wasm public/wasm/
-   ```
-
-Both copy targets are gitignored (`public/wasm/*`, `public/windows/*`) -- only `.gitkeep`
-placeholders are tracked, so the directories exist in a clean checkout but stay empty until a
-developer runs the two copy steps above.
+`public/wasm/*` is gitignored -- only the `.gitkeep` placeholder is tracked, so the directory
+exists in a clean checkout but stays empty until a developer runs the copy step above. CI builds
+the WASM module fresh for the GitHub Pages deploy instead of relying on a committed copy.
 
 ## Commands
 

@@ -1,0 +1,73 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Set up emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.6
+
+      - name: Build WASM module
+        working-directory: demo/wasm
+        run: |
+          emcmake cmake -S . -B build -G Ninja
+          cmake --build build
+
+      - name: Copy WASM module into site public/wasm
+        run: |
+          mkdir -p demo/site/public/wasm
+          cp demo/wasm/build/impact_wasm.js demo/wasm/build/impact_wasm.wasm demo/site/public/wasm/
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install site dependencies
+        working-directory: demo/site
+        run: npm ci
+
+      - name: Test
+        working-directory: demo/site
+        run: npx vitest run
+
+      - name: Build site
+        working-directory: demo/site
+        run: npx vite build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
