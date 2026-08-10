@@ -569,7 +569,9 @@ at `php.lobsterdata.com/info/sample/LOBSTER_SampleFile_AAPL_2012-06-21_10.zip` �
 legacy `php.lobsterdata.com` subdomain serves files to non-browser clients. Measured file sizes and row
 counts for all three are in `docs/data-spike.md`.
 
-**Research half**, from `research/` (Python 3.12 managed with uv):
+**Research half**, from `research/` (Python 3.12 managed with uv). Install uv first if it is not
+already on PATH — `curl -LsSf https://astral.sh/uv/install.sh | sh` (astral.sh); `uv run` then
+creates the virtualenv and installs dependencies automatically.
 
     uv run python -m pipeline.download --start 2026-02-01 --end 2026-07-31 --symbols BTCUSDT,ETHUSDT
     uv run python -m proxy.validate
@@ -589,6 +591,10 @@ Tardis midprice day that `proxy.validate` downloads. `equity.figures` needs the 
     cmake --preset native
     cmake --build build/native
     ctest --test-dir build/native
+
+`tardis_replay` and `tardis_bench` link zlib; install it first (`apt-get install zlib1g-dev` on
+Debian/Ubuntu) or cmake skips both targets and the two commands below have nothing to run — the
+rest of the test suite still builds and passes without it.
 
     ./build/native/engine/tardis_replay \
         --l2 data/tardis/incremental_book_L2_2026-08-01_BTCUSDT.csv.gz \

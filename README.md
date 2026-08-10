@@ -23,7 +23,8 @@ What this repo will contain as it grows:
 - A hosted interactive demo — curated replay windows showing walk-the-book slippage diverging
   from the square-root-law prediction, which is the point: that gap is latent liquidity.
 
-Build (WSL2 or Linux, clang):
+Build (WSL2 or Linux, clang; needs `cmake`, `ninja-build`, `clang` installed —
+`apt-get install cmake ninja-build clang` on Debian/Ubuntu):
 
     cmake --preset native
     cmake --build build/native
